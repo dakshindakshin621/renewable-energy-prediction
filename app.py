@@ -30,12 +30,17 @@ st.caption("Machine Learning-Based Predictive Analytics for Renewable Energy Gen
 
 st.sidebar.title("⚙️ Dashboard Settings")
 
+
 @st.cache_data
 def load_dataset():
-    path = "renewable_energy.csv"
+    paths = [
+        "renewable_energy.csv",
+        "data/renewable_energy.csv"
+    ]
 
-    if os.path.exists(path):
-        return pd.read_csv(path)
+    for path in paths:
+        if os.path.exists(path):
+            return pd.read_csv(path)
 
     return None
 
@@ -51,7 +56,7 @@ else:
     df = load_dataset()
 
 if df is None:
-    st.error("Dataset not found. Please run generate_data.py first.")
+    st.error("Dataset not found. Upload your renewable_energy.csv file.")
     st.stop()
 
 df.columns = df.columns.str.strip()
@@ -98,8 +103,6 @@ target = st.selectbox(
     index=default_target
 )
 
-# Prepare data
-
 data = df.copy()
 
 date_col = None
@@ -114,8 +117,6 @@ for col in data.columns:
             data[col + "_month"] = parsed.dt.month
             date_col = col
             break
-
-# Environmental features
 
 preferred_features = [
     "temperature",
@@ -132,8 +133,6 @@ feature_columns = [
     col for col in preferred_features
     if col in data.columns and col != target
 ]
-
-# Avoid using generated energy outputs as inputs
 
 if not feature_columns:
     excluded = [
@@ -165,8 +164,6 @@ X = X.dropna(axis=1, how="all")
 if X.empty:
     st.error("No usable input features found.")
     st.stop()
-
-# Chronological sorting
 
 if date_col:
     dates = pd.to_datetime(data.loc[valid, date_col], errors="coerce")
@@ -236,44 +233,45 @@ st.write(
     "to identify the best prediction model."
 )
 
+models = {
+    "Linear Regression": Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+        ("model", LinearRegression())
+    ]),
+
+    "Decision Tree": Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", DecisionTreeRegressor(
+            max_depth=15,
+            random_state=42
+        ))
+    ]),
+
+    "Random Forest": Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", RandomForestRegressor(
+            n_estimators=100,
+            max_depth=15,
+            n_jobs=-1,
+            random_state=42
+        ))
+    ]),
+
+    "Gradient Boosting": Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", HistGradientBoostingRegressor(
+            max_iter=100,
+            random_state=42
+        ))
+    ])
+}
+
 if st.button("🚀 Train All Models", type="primary"):
-
-    models = {
-        "Linear Regression": Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-            ("model", LinearRegression())
-        ]),
-
-        "Decision Tree": Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("model", DecisionTreeRegressor(
-                max_depth=15,
-                random_state=42
-            ))
-        ]),
-
-        "Random Forest": Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("model", RandomForestRegressor(
-                n_estimators=100,
-                max_depth=15,
-                n_jobs=-1,
-                random_state=42
-            ))
-        ]),
-
-        "Gradient Boosting": Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("model", HistGradientBoostingRegressor(
-                max_iter=100,
-                random_state=42
-            ))
-        ])
-    }
 
     results = []
     predictions = {}
+    trained_models = {}
 
     progress = st.progress(0)
 
@@ -284,6 +282,7 @@ if st.button("🚀 Train All Models", type="primary"):
         pred = model.predict(X_test)
 
         predictions[name] = pred
+        trained_models[name] = model
 
         results.append({
             "Model": name,
@@ -303,16 +302,15 @@ if st.button("🚀 Train All Models", type="primary"):
     results_df = results_df.sort_values("RMSE")
 
     best_name = results_df.iloc[0]["Model"]
-    best_model = models[best_name]
 
-    joblib.dump(best_model, "models/best_model.pkl")
+    joblib.dump(trained_models[best_name], "models/best_model.pkl")
     joblib.dump(list(X.columns), "models/features.pkl")
     joblib.dump(target, "models/target.pkl")
 
     st.session_state["results"] = results_df
     st.session_state["predictions"] = predictions
+    st.session_state["trained_models"] = trained_models
     st.session_state["best_name"] = best_name
-    st.session_state["best_model"] = best_model
     st.session_state["X_test"] = X_test
     st.session_state["y_test"] = y_test
 
@@ -322,7 +320,7 @@ if st.button("🚀 Train All Models", type="primary"):
 
 if "results" in st.session_state:
 
-    st.subheader("5. Model Performance")
+    st.subheader("5. Model Performance Comparison")
 
     results_df = st.session_state["results"]
 
@@ -339,29 +337,43 @@ if "results" in st.session_state:
 
     st.success(f"Best Performing Model: {best_name}")
 
-    best_result = results_df[
-        results_df["Model"] == best_name
+    st.subheader("6. Select Machine Learning Model")
+
+    model_names = list(st.session_state["trained_models"].keys())
+
+    selected_name = st.selectbox(
+        "Choose a model for prediction",
+        model_names,
+        index=model_names.index(best_name)
+    )
+
+    selected_model = st.session_state["trained_models"][selected_name]
+
+    selected_result = results_df[
+        results_df["Model"] == selected_name
     ].iloc[0]
+
+    st.write(f"Selected Model: **{selected_name}**")
 
     m1, m2, m3 = st.columns(3)
 
-    m1.metric("MAE", f"{best_result['MAE']:.3f}")
-    m2.metric("RMSE", f"{best_result['RMSE']:.3f}")
-    m3.metric("R² Score", f"{best_result['R2 Score']:.4f}")
+    m1.metric("MAE", f"{selected_result['MAE']:.3f}")
+    m2.metric("RMSE", f"{selected_result['RMSE']:.3f}")
+    m3.metric("R² Score", f"{selected_result['R2 Score']:.4f}")
 
     # Actual vs Predicted graph
 
-    st.subheader("6. Actual vs Predicted Energy Generation")
+    st.subheader("7. Actual vs Predicted Energy Generation")
 
     actual = st.session_state["y_test"]
-    pred = st.session_state["predictions"][best_name]
+    pred = st.session_state["predictions"][selected_name]
 
     fig, ax = plt.subplots(figsize=(12, 5))
 
     ax.plot(actual.iloc[:500].values, label="Actual")
     ax.plot(pred[:500], label="Predicted")
 
-    ax.set_title("Actual vs Predicted Energy")
+    ax.set_title(f"Actual vs Predicted - {selected_name}")
     ax.set_xlabel("Test Observations")
     ax.set_ylabel(target)
     ax.legend()
@@ -371,11 +383,9 @@ if "results" in st.session_state:
 
     # Interactive prediction
 
-    st.subheader("7. Interactive Energy Prediction")
+    st.subheader("8. Interactive Energy Prediction")
 
-    model = st.session_state["best_model"]
     X_test = st.session_state["X_test"]
-
     sample = X_test.iloc[-1].copy()
 
     st.write("Enter environmental conditions to predict energy generation.")
@@ -409,7 +419,7 @@ if "results" in st.session_state:
             columns=X_test.columns
         )
 
-        prediction = model.predict(input_df)[0]
+        prediction = selected_model.predict(input_df)[0]
 
         st.success("Prediction completed successfully!")
 
@@ -419,10 +429,11 @@ if "results" in st.session_state:
         )
 
         st.caption(f"Prediction target: {target}")
+        st.caption(f"Model used: {selected_name}")
 
     # Download results
 
-    st.subheader("8. Download Prediction Results")
+    st.subheader("9. Download Prediction Results")
 
     output = pd.DataFrame({
         "Actual": actual.values,
@@ -432,7 +443,7 @@ if "results" in st.session_state:
     st.download_button(
         "📥 Download Prediction Results",
         output.to_csv(index=False),
-        file_name="renewable_energy_predictions.csv",
+        file_name=f"{selected_name.replace(' ', '_')}_predictions.csv",
         mime="text/csv"
     )
 
@@ -449,4 +460,3 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Renewable Energy Prediction | Machine Learning Project")
-
