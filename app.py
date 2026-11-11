@@ -32,7 +32,7 @@ st.sidebar.title("⚙️ Dashboard Settings")
 
 @st.cache_data
 def load_dataset():
-    path = "data/renewable_energy.csv"
+    path = "renewable_energy.csv"
 
     if os.path.exists(path):
         return pd.read_csv(path)
